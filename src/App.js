@@ -360,7 +360,7 @@ export default function App(){
     setView("home");
   };
   const onCadSave=()=>{
-    if(!cadForm.nome||!cadForm.rua||!cadForm.num||!cadForm.bairroSel||!cadForm.senha||!cadForm.dica){setAuthErr("Preencha todos os campos.");return;}
+    if(!cadForm.nome||!cadForm.rua||!cadForm.num||!cadForm.bairroSel||!cadForm.senha||!cadForm.dica){return;}
     const novo={nome:cadForm.nome,tel:authTel,rua:cadForm.rua,num:cadForm.num,bairro:cadForm.bairroSel,senha:cadForm.senha,dica:cadForm.dica,pedidos:0,primeiro:now(),ultimo:now()};
     upC([novo,..._clientes]);
     setCliente(novo);
