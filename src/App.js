@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-const VERSAO = "2.1.0";
+const VERSAO = "2.1.0"; // eslint-disable-line
 const WHATSAPP = "5511913359350";
 const INSTAGRAM = "elchai_pastelaria";
 const DELIVERY_MINS = 40;
@@ -82,7 +82,7 @@ async function dbGet(key){ try{ const r=await window.storage.get(key); return r?
 async function dbSet(key,val){ try{ await window.storage.set(key,JSON.stringify(val)); }catch{} }
 
 // ── memory store (synced with storage) ──
-let _pedidos=[], _clientes=[], _fotos={}, _codes={};
+let _pedidos=[], _clientes=[], _fotos={};
 let _loja={nome:"Elchai Pastelaria",logo:null,rua:"Rua Desembargador Áureo Cerqueira Leite",num:"172",bairro:"Cidade Kemel",cidade:"São Paulo",cep:"08130-410"};
 
 // ── design tokens ──
