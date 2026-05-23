@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import { useState, useEffect, useRef } from "react";
 
 const VERSAO = "2.1.0"; // eslint-disable-line
@@ -195,9 +194,10 @@ function Timer({startTs}){
 function AuthTel({onNext,onBack}){
   const [tel,setTel]=useState(""); const [err,setErr]=useState("");
   const go=()=>{
-    const t=tel.replace(/\D/g,""); if(t.length<10){setErr("Telefone inválido.");return;}
-    const cli=_clientes.find(c=>c.tel.replace(/\D/g,"")=== t);
-    onNext(tel,cli||null);
+    const t=tel.replace(/\D/g,"");
+    if(t.length<10){setErr("Telefone inválido.");return;}
+    const cli=_clientes.find(c=>c.tel.replace(/\D/g,"")=== t)||null;
+    onNext(tel,cli);
   };
   return(
     <div style={{padding:"30px 20px",textAlign:"center"}}>
