@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { useState, useEffect, useRef } from "react";
 
 const VERSAO = "2.1.0"; // eslint-disable-line
