@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { supabase } from './supabase';
+
+const VERSAO = "2.1.0";
 const WHATSAPP = "5511913359350";
 const INSTAGRAM = "elchai_pastelaria";
 const DELIVERY_MINS = 40;
@@ -77,25 +78,8 @@ function exportCSV(rows,filename){
 }
 
 // ── persistent store helpers ──
-async function dbGet(key){
-  if(key==="elchai_pedidos"){ const {data}=await supabase.from("pedidos").select("*").order("ts",{ascending:false}); return data||[]; }
-  if(key==="elchai_clientes"){ const {data}=await supabase.from("clientes").select("*"); return data||[]; }
-  const {data}=await supabase.from("config").select("valor").eq("chave",key).single();
-  return data?JSON.parse(data.valor):null;
-}
-async function dbSet(key,val){
-  if(key==="elchai_pedidos"||key==="elchai_clientes") return;
-  await supabase.from("config").upsert({chave:key,valor:JSON.stringify(val)});
-}
-async function salvarPedidoDB(p){
-  await supabase.from("pedidos").upsert({id:p.id,data:p.data,ts:p.ts,cliente:p.cliente,itens:p.itens,total:p.total,frete:p.frete,km:p.km,status:p.status,pagto:p.pagto});
-}
-async function salvarClienteDB(c){
-  await supabase.from("clientes").upsert(c,{onConflict:"tel"});
-}
-async function atualizarStatusDB(id,status){
-  await supabase.from("pedidos").update({status}).eq("id",id);
-}
+async function dbGet(key){ try{ const r=await window.storage.get(key); return r?JSON.parse(r.value):null; }catch{ return null; } }
+async function dbSet(key,val){ try{ await window.storage.set(key,JSON.stringify(val)); }catch{} }
 
 // ── memory store (synced with storage) ──
 let _pedidos=[], _clientes=[], _fotos={}, _codes={};
@@ -131,6 +115,60 @@ function LogoBadge({logo,size=70}){
   );
 }
 
+function ClienteCard({c, upC, BAIRROS, LOJA_LAT, LOJA_LNG, haversine, calcFrete, inp, lbl, btnG, btnD, card, G, gg}){
+  const [resetando,setResetando]=useState(false);
+  const [novaSenha,setNovaSenha]=useState("");
+  const [editando,setEditando]=useState(false);
+  const [editForm,setEditForm]=useState({nome:c.nome,rua:c.rua||"",num:c.num||"",bairro:c.bairro||""});
+  return(
+    <div style={card}>
+      {!editando ? <>
+        <div style={{fontWeight:800,marginBottom:3}}>👤 {c.nome}</div>
+        <div style={{fontSize:13,color:"#ccc"}}>📱 {c.tel}</div>
+        <div style={{fontSize:12,color:G.tm}}>📍 {c.rua}, {c.num} - {c.bairro}</div>
+        <div style={{fontSize:12,color:G.gl,marginTop:5,marginBottom:8}}>🛒 {c.pedidos} pedido(s) · Último: {c.ultimo}</div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={{...btnD,marginBottom:0,flex:1,fontSize:12,padding:"8px"}} onClick={()=>{setEditando(true);setEditForm({nome:c.nome,rua:c.rua||"",num:c.num||"",bairro:c.bairro||""});}}>✏️ Editar</button>
+          <button style={{...btnD,marginBottom:0,flex:1,fontSize:12,padding:"8px"}} onClick={()=>setResetando(!resetando)}>🔑 Resetar senha</button>
+        </div>
+        {resetando&&<div style={{marginTop:8}}>
+          <input style={{...inp,marginBottom:8}} placeholder="Nova senha" value={novaSenha} onChange={e=>setNovaSenha(e.target.value)}/>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{...btnG,marginBottom:0,flex:1,padding:"9px",fontSize:13}} onClick={()=>{
+              if(!novaSenha){alert("Digite a nova senha!");return;}
+              const n=_clientes.map(x=>x.tel===c.tel?{...x,senha:novaSenha,senhaResetada:true}:x);
+              upC(n);setResetando(false);setNovaSenha("");alert(`✅ Senha de ${c.nome} resetada! Ele precisará criar uma nova senha no próximo acesso.`);
+            }}>✅ Salvar</button>
+            <button style={{...btnD,marginBottom:0,flex:1,padding:"9px",fontSize:13}} onClick={()=>{setResetando(false);setNovaSenha("");}}>Cancelar</button>
+          </div>
+        </div>}
+      </> : <>
+        <div style={{fontWeight:800,color:G.gl,marginBottom:10}}>✏️ Editar {c.nome}</div>
+        <label style={lbl}>Nome</label>
+        <input style={inp} value={editForm.nome} onChange={e=>setEditForm({...editForm,nome:e.target.value})}/>
+        <label style={lbl}>Rua</label>
+        <input style={inp} value={editForm.rua} onChange={e=>setEditForm({...editForm,rua:e.target.value})}/>
+        <div style={{display:"flex",gap:8}}>
+          <div style={{flex:1}}><label style={lbl}>Número</label><input style={inp} value={editForm.num} onChange={e=>setEditForm({...editForm,num:e.target.value})}/></div>
+          <div style={{flex:2}}><label style={lbl}>Bairro</label>
+            <select style={{...inp,cursor:"pointer"}} value={editForm.bairro} onChange={e=>setEditForm({...editForm,bairro:e.target.value})}>
+              <option value="">-- Selecione --</option>
+              {BAIRROS.map(b=>{const km=haversine(LOJA_LAT,LOJA_LNG,b.lat,b.lng),f=calcFrete(km);return f!==null&&<option key={b.b} value={b.b}>{b.b}</option>;})}
+            </select>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,marginTop:4}}>
+          <button style={{...btnG,marginBottom:0,flex:1,padding:"9px",fontSize:13}} onClick={()=>{
+            const n=_clientes.map(x=>x.tel===c.tel?{...x,...editForm}:x);
+            upC(n);setEditando(false);
+          }}>✅ Salvar</button>
+          <button style={{...btnD,marginBottom:0,flex:1,padding:"9px",fontSize:13}} onClick={()=>setEditando(false)}>Cancelar</button>
+        </div>
+      </>}
+    </div>
+  );
+}
+
 function Timer({startTs}){
   const [el,setEl]=useState(()=>Math.floor((Date.now()-(startTs||Date.now()))/1000));
   useEffect(()=>{ const iv=setInterval(()=>setEl(e=>e+1),1000); return()=>clearInterval(iv); },[]);
@@ -153,44 +191,22 @@ function Timer({startTs}){
 }
 
 // ── Auth screens (shared between home login and checkout) ──
-function AuthTel({onNext,onBack,title="Identificação"}){
+function AuthTel({onNext,onBack}){
   const [tel,setTel]=useState(""); const [err,setErr]=useState("");
   const go=()=>{
     const t=tel.replace(/\D/g,""); if(t.length<10){setErr("Telefone inválido.");return;}
-    const code=genCode(); _codes[t]=code; onNext(tel,code);
+    const cli=_clientes.find(c=>c.tel.replace(/\D/g,"")=== t);
+    onNext(tel,cli||null);
   };
   return(
     <div style={{padding:"30px 20px",textAlign:"center"}}>
       <div style={{fontSize:48,marginBottom:10}}>📱</div>
-      <div style={{fontSize:17,fontWeight:800,color:G.gl,marginBottom:6}}>{title}</div>
-      <div style={{fontSize:13,color:G.tm,marginBottom:20}}>Digite seu WhatsApp para entrar</div>
+      <div style={{fontSize:17,fontWeight:800,color:G.gl,marginBottom:6}}>Qual seu WhatsApp?</div>
+      <div style={{fontSize:13,color:G.tm,marginBottom:20}}>Digite seu número para entrar</div>
       <input style={inp} placeholder="(11) 91234-5678" value={tel} onChange={e=>setTel(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
       {err&&<div style={{color:"#f55",fontSize:13,marginBottom:8}}>{err}</div>}
-      <button style={btnG} onClick={go}>Enviar Código →</button>
+      <button style={btnG} onClick={go}>Continuar →</button>
       {onBack&&<button style={btnD} onClick={onBack}>← Voltar</button>}
-    </div>
-  );
-}
-
-function AuthCode({tel,codeSent,onVerified,onBack}){
-  const [code,setCode]=useState(""); const [err,setErr]=useState("");
-  const go=()=>{
-    const t=tel.replace(/\D/g,"");
-    if(code!==_codes[t]){setErr("Código incorreto.");return;}
-    delete _codes[t];
-    const cli=_clientes.find(c=>c.tel.replace(/\D/g,"")=== t);
-    onVerified(cli||null);
-  };
-  return(
-    <div style={{padding:"30px 20px",textAlign:"center"}}>
-      <div style={{fontSize:48,marginBottom:10}}>🔐</div>
-      <div style={{fontSize:17,fontWeight:800,color:G.gl,marginBottom:4}}>Digite o código</div>
-      <div style={{fontSize:13,color:G.tm,marginBottom:4}}>Enviado para {tel}</div>
-      <div style={{background:"#1a3a1a",borderRadius:10,padding:"10px",marginBottom:16,fontSize:13,color:"#6f6"}}>🟢 <strong>Demo:</strong> código é <strong style={{letterSpacing:3}}>{codeSent}</strong></div>
-      <input style={{...inp,textAlign:"center",fontSize:22,letterSpacing:8,fontWeight:800}} placeholder="000000" maxLength={6} value={code} onChange={e=>setCode(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
-      {err&&<div style={{color:"#f55",fontSize:13,marginBottom:8}}>{err}</div>}
-      <button style={btnG} onClick={go}>Verificar →</button>
-      <button style={btnD} onClick={onBack}>← Voltar</button>
     </div>
   );
 }
@@ -198,7 +214,7 @@ function AuthCode({tel,codeSent,onVerified,onBack}){
 function AuthCadastro({tel,form,setForm,onSave,onBack}){
   const [err,setErr]=useState("");
   const go=()=>{
-    if(!form.nome||!form.rua||!form.num||!form.bairroSel){setErr("Preencha todos os campos.");return;}
+    if(!form.nome||!form.rua||!form.num||!form.bairroSel||!form.senha||!form.dica){setErr("Preencha todos os campos.");return;}
     onSave();
   };
   return(
@@ -212,6 +228,14 @@ function AuthCadastro({tel,form,setForm,onSave,onBack}){
         <option value="">-- Selecione --</option>
         {BAIRROS.map(b=>{const km=haversine(LOJA_LAT,LOJA_LNG,b.lat,b.lng),f=calcFrete(km);return f!==null&&<option key={b.b} value={b.b}>{b.b} · {fmt(f)} ({km.toFixed(1)}km)</option>;})}
       </select>
+      <label style={lbl}>Crie uma senha *</label>
+      <input type="password" style={inp} placeholder="Ex: gato2010, flamengo, ana1985" value={form.senha} onChange={e=>setForm({...form,senha:e.target.value})}/>
+      <div style={{background:"#1a2a1a",borderRadius:10,padding:"10px",marginBottom:10,fontSize:12,color:"#aaa",border:"1px solid #2d5a2d"}}>
+        💡 Use algo fácil de lembrar: nome do pet, time, data especial. Ex: <strong style={{color:"#6f6"}}>"gato2010"</strong>, <strong style={{color:"#6f6"}}>"flamengo"</strong>, <strong style={{color:"#6f6"}}>"ana1985"</strong>
+      </div>
+      <label style={lbl}>Crie uma dica para lembrar sua senha *</label>
+      <input style={inp} placeholder="Ex: nome do meu gato, time do coração" value={form.dica} onChange={e=>setForm({...form,dica:e.target.value})}/>
+      <div style={{fontSize:12,color:G.tm,marginBottom:10}}>⚠️ A dica não deve revelar sua senha diretamente.</div>
       {err&&<div style={{color:"#f55",fontSize:13,marginBottom:8}}>{err}</div>}
       <div style={{position:"sticky",bottom:0,background:G.bg,padding:"11px 0",borderTop:`1px solid ${G.gold}22`,marginTop:8}}>
         <button style={btnG} onClick={go}>Salvar e Continuar →</button>
@@ -299,20 +323,45 @@ export default function App(){
   // ao verificar código com sucesso, salvar sessão
   const onCodeVerified=(cli)=>{
     if(cli){
-      setCliente(cli);
-      setEndForm(f=>({...f,rua:cli.rua||"",num:cli.num||"",bairroSel:cli.bairro||""}));
-      // restaurar último pedido do cliente
-      const ped=_pedidos.find(x=>x.cliente.tel===cli.tel);
-      if(ped){ setPedidoConf(ped); setPedidoTs(ped.ts||null); }
-      dbSet("elchai_sessao",{tel:cli.tel,pedidoId:ped?.id||null,pedidoTs:ped?.ts||null});
-      setView("home");
+      // cliente existe — pedir senha
+      setAuthTel(cli.tel);
+      setView("login-senha");
     } else {
-      setCadForm({nome:"",rua:"",num:"",bairroSel:""});
+      setCadForm({nome:"",rua:"",num:"",bairroSel:"",senha:"",dica:""});
       setView("login-cad");
     }
   };
+
+  const [senhaInput,setSenhaInput]=useState("");
+  const [senhaErr,setSenhaErr]=useState("");
+  const [mostrarDica,setMostrarDica]=useState(false);
+  const [novaSenhaInput,setNovaSenhaInput]=useState("");
+  const [novaSenhaConf,setNovaSenhaConf]=useState("");
+  const [novaDicaInput,setNovaDicaInput]=useState("");
+  const [novaSenhaErr,setNovaSenhaErr]=useState("");
+
+  const verificarSenha=()=>{
+    const tel=authTel.replace(/\D/g,"");
+    const cli=_clientes.find(c=>c.tel.replace(/\D/g,"")=== tel);
+    if(!cli){setSenhaErr("Cliente não encontrado.");return;}
+    // senha foi resetada pelo dono — forçar nova senha
+    if(cli.senhaResetada){
+      setCliente(cli);
+      setView("nova-senha");
+      return;
+    }
+    if(senhaInput!==cli.senha){setSenhaErr("Senha incorreta.");return;}
+    setCliente(cli);
+    setEndForm(f=>({...f,rua:cli.rua||"",num:cli.num||"",bairroSel:cli.bairro||""}));
+    const ped=_pedidos.find(x=>x.cliente.tel===cli.tel);
+    if(ped){setPedidoConf(ped);setPedidoTs(ped.ts||null);}
+    dbSet("elchai_sessao",{tel:cli.tel,pedidoId:ped?.id||null,pedidoTs:ped?.ts||null});
+    setSenhaInput("");setSenhaErr("");setMostrarDica(false);
+    setView("home");
+  };
   const onCadSave=()=>{
-    const novo={nome:cadForm.nome,tel:authTel,rua:cadForm.rua,num:cadForm.num,bairro:cadForm.bairroSel,pedidos:0,primeiro:now(),ultimo:now()};
+    if(!cadForm.nome||!cadForm.rua||!cadForm.num||!cadForm.bairroSel||!cadForm.senha||!cadForm.dica){setAuthErr("Preencha todos os campos.");return;}
+    const novo={nome:cadForm.nome,tel:authTel,rua:cadForm.rua,num:cadForm.num,bairro:cadForm.bairroSel,senha:cadForm.senha,dica:cadForm.dica,pedidos:0,primeiro:now(),ultimo:now()};
     upC([novo,..._clientes]);
     setCliente(novo);
     setEndForm({rua:cadForm.rua,num:cadForm.num,bairroSel:cadForm.bairroSel,obs:"",pagto:"pix"});
@@ -336,9 +385,7 @@ export default function App(){
     const id=genId(), ts=Date.now();
     const pedido={id,data:now(),ts,cliente:{...cliente,...endForm,bairro:endForm.bairroSel},itens:cart,total,frete:frete.valor,km:frete.km,status:0,pagto:endForm.pagto};
     upP([pedido,..._pedidos]);
-    salvarPedidoDB(pedido);
     upC(_clientes.map(c=>c.tel===authTel?{...c,pedidos:c.pedidos+1,ultimo:now()}:c));
-    salvarClienteDB(_clientes.find(c=>c.tel===authTel));
     setPedidoConf(pedido); setPedidoTs(ts);
     dbSet("elchai_sessao",{tel:authTel,pedidoId:id,pedidoTs:ts});
     setCart([]); setView("confirmado");
@@ -352,7 +399,6 @@ export default function App(){
       const msg=encodeURIComponent(`🥟 *Elchai Pastelaria*\n\nOlá ${p.cliente.nome.split(" ")[0]}! Pedido *#${p.id}*:\n\n${ST_EMOJI[ns]} *${ST_LABELS[ns]}*`);
       setTimeout(()=>window.open(`https://wa.me/${tel}?text=${msg}`,"_blank"),200);
       if(p.id===pedidoConf?.id) setPedidoConf({...p,status:ns});
-      atualizarStatusDB(p.id,ns);
       return{...p,status:ns};
     });
     upP(n);
@@ -391,19 +437,40 @@ export default function App(){
   if(view==="login-tel") return(
     <div style={app}>
       <div style={hdr}><button style={btnBack} onClick={()=>setView("splash")}>← Voltar</button><span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Entrar</span><div/></div>
-      <AuthTel onNext={onTelNext} onBack={()=>setView("splash")} title="Qual seu WhatsApp?"/>
+      <AuthTel onNext={onTelNext} onBack={()=>setView("splash")}/>
     </div>
   );
 
-  // ── LOGIN CODE ──
-  if(view==="login-code") return(
-    <div style={app}>
-      <div style={hdr}><button style={btnBack} onClick={()=>setView("login-tel")}>← Voltar</button><span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Confirmação</span><div/></div>
-      <AuthCode tel={authTel} codeSent={authCodeSent} onVerified={onCodeVerified} onBack={()=>setView("login-tel")}/>
-    </div>
-  );
-
-  // ── LOGIN CADASTRO ──
+  // ── LOGIN SENHA ──
+  if(view==="login-senha"){
+    const tel=authTel.replace(/\D/g,"");
+    const cli=_clientes.find(c=>c.tel.replace(/\D/g,"")=== tel);
+    return(
+      <div style={app}>
+        <div style={hdr}><button style={btnBack} onClick={()=>setView("login-tel")}>← Voltar</button><span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Sua Senha</span><div/></div>
+        <div style={{padding:"30px 20px",textAlign:"center"}}>
+          <div style={{fontSize:48,marginBottom:10}}>🔑</div>
+          <div style={{fontSize:17,fontWeight:800,color:G.gl,marginBottom:4}}>Olá, {cli?.nome?.split(" ")[0]}!</div>
+          <div style={{fontSize:13,color:G.tm,marginBottom:20}}>Digite sua senha para entrar</div>
+          <input type="password" style={inp} placeholder="Sua senha" value={senhaInput} onChange={e=>setSenhaInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&verificarSenha()}/>
+          {senhaErr&&<div style={{color:"#f55",fontSize:13,marginBottom:8}}>{senhaErr}</div>}
+          <button style={btnG} onClick={verificarSenha}>Entrar →</button>
+          {/* Esqueci minha senha */}
+          {!mostrarDica
+            ? <button style={{...btnD,marginTop:4}} onClick={()=>setMostrarDica(true)}>🤔 Esqueci minha senha</button>
+            : <div style={{background:G.bc,borderRadius:12,padding:"14px",marginTop:8,border:`1px solid ${G.gold}33`,textAlign:"left"}}>
+                <div style={{fontSize:12,color:G.tm,marginBottom:6}}>💡 Sua dica de senha:</div>
+                <div style={{fontSize:15,fontWeight:700,color:G.gl,marginBottom:12}}>"{cli?.dica}"</div>
+                <div style={{fontSize:12,color:G.tm,marginBottom:8}}>Ainda não lembrou? Fale com a loja:</div>
+                <button style={{...btnD,background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",marginBottom:0}} onClick={()=>window.open(`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(`Olá Elchai! Esqueci minha senha. Meu número é ${authTel}. Pode resetar?`)}`,"_blank")}>
+                  💬 Pedir reset pelo WhatsApp
+                </button>
+              </div>
+          }
+        </div>
+      </div>
+    );
+  }
   if(view==="login-cad") return(
     <div style={app}>
       <div style={hdr}><button style={btnBack} onClick={()=>setView("login-tel")}>← Voltar</button><span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Cadastro</span><div/></div>
@@ -411,7 +478,47 @@ export default function App(){
     </div>
   );
 
-  // ── HOME (logado) ──
+  // ── NOVA SENHA (após reset) ──
+  if(view==="nova-senha"){
+    const salvar=()=>{
+      if(!novaSenhaInput||!novaSenhaConf||!novaDicaInput){setNovaSenhaErr("Preencha todos os campos.");return;}
+      if(novaSenhaInput!==novaSenhaConf){setNovaSenhaErr("As senhas não coincidem.");return;}
+      const n=_clientes.map(x=>x.tel===cliente.tel?{...x,senha:novaSenhaInput,dica:novaDicaInput,senhaResetada:false}:x);
+      upC(n);
+      setEndForm(f=>({...f,rua:cliente.rua||"",num:cliente.num||"",bairroSel:cliente.bairro||""}));
+      const ped=_pedidos.find(x=>x.cliente.tel===cliente.tel);
+      if(ped){setPedidoConf(ped);setPedidoTs(ped.ts||null);}
+      dbSet("elchai_sessao",{tel:cliente.tel,pedidoId:ped?.id||null,pedidoTs:ped?.ts||null});
+      setNovaSenhaInput("");setNovaSenhaConf("");setNovaDicaInput("");setNovaSenhaErr("");
+      setView("home");
+    };
+    return(
+      <div style={app}>
+        <div style={hdr}><div/><span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Nova Senha</span><div/></div>
+        <div style={{padding:"24px 20px"}}>
+          <div style={{fontSize:48,textAlign:"center",marginBottom:10}}>🔑</div>
+          <div style={{fontSize:15,fontWeight:800,color:G.gl,textAlign:"center",marginBottom:4}}>Crie uma nova senha</div>
+          <div style={{fontSize:13,color:G.tm,textAlign:"center",marginBottom:20}}>Sua senha foi resetada. Crie uma nova para continuar!</div>
+          <label style={lbl}>Nova senha *</label>
+          <input type="password" style={inp} placeholder="Ex: gato2010, flamengo" value={novaSenhaInput} onChange={e=>setNovaSenhaInput(e.target.value)}/>
+          <label style={lbl}>Confirme a senha *</label>
+          <input type="password" style={inp} placeholder="Digite a senha novamente" value={novaSenhaConf} onChange={e=>setNovaSenhaConf(e.target.value)}/>
+          {novaSenhaInput&&novaSenhaConf&&(
+            <div style={{fontSize:12,marginBottom:8,color:novaSenhaInput===novaSenhaConf?"#6f6":"#f55"}}>
+              {novaSenhaInput===novaSenhaConf?"✅ Senhas coincidem":"❌ Senhas não coincidem"}
+            </div>
+          )}
+          <div style={{background:"#1a2a1a",borderRadius:10,padding:"10px",marginBottom:10,fontSize:12,color:"#aaa",border:"1px solid #2d5a2d"}}>
+            💡 Use algo fácil de lembrar: nome do pet, time, data especial.
+          </div>
+          <label style={lbl}>Crie uma dica para lembrar *</label>
+          <input style={inp} placeholder="Ex: nome do meu gato" value={novaDicaInput} onChange={e=>setNovaDicaInput(e.target.value)}/>
+          {novaSenhaErr&&<div style={{color:"#f55",fontSize:13,marginBottom:8}}>{novaSenhaErr}</div>}
+          <button style={btnG} onClick={salvar}>✅ Salvar nova senha</button>
+        </div>
+      </div>
+    );
+  }
   if(view==="home") return(
     <div style={app}>
       <div style={hdr}>
@@ -686,7 +793,14 @@ export default function App(){
             {loja.logo?<img src={loja.logo} style={{width:28,height:28,borderRadius:"50%",border:`1px solid ${G.gold}`}} alt="logo"/>:<span>⚙️</span>}
             <span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Admin</span>
           </div>
-          <button style={btnBack} onClick={()=>{setAdminOk(false);setView("splash");}}>Sair</button>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {/* Sino de notificação */}
+            <div style={{position:"relative",cursor:"pointer"}} onClick={()=>setTab("pedidos")}>
+              <span style={{fontSize:22}}>🔔</span>
+              {ativos.length>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#f55",color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:11,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{ativos.length}</span>}
+            </div>
+            <button style={btnBack} onClick={()=>{setAdminOk(false);setView("splash");}}>Sair</button>
+          </div>
         </div>
         <div style={{display:"flex",gap:8,padding:"12px 12px 6px"}}>
           {[{l:"Total",v:pedidos.length},{l:"Hoje",v:vHoje.length},{l:"Faturado",v:fmt(tHoje)},{l:"Clientes",v:clientes.length}].map((s,i)=>(
@@ -736,14 +850,7 @@ export default function App(){
         {tab==="clientes"&&<div style={{padding:"10px 0"}}>
           <div style={{padding:"0 12px 10px"}}><button style={{...btnG,padding:"10px",fontSize:13,marginBottom:0}} onClick={expClientes}>⬇️ Exportar CSV</button></div>
           {clientes.length===0&&<div style={{color:G.tm,textAlign:"center",padding:24}}>Sem clientes</div>}
-          {clientes.map((c,i)=>(
-            <div key={i} style={card}>
-              <div style={{fontWeight:800,marginBottom:3}}>👤 {c.nome}</div>
-              <div style={{fontSize:13,color:"#ccc"}}>📱 {c.tel}</div>
-              <div style={{fontSize:12,color:G.tm}}>📍 {c.rua}, {c.num} - {c.bairro}</div>
-              <div style={{fontSize:12,color:G.gl,marginTop:5}}>🛒 {c.pedidos} pedido(s) · Último: {c.ultimo}</div>
-            </div>
-          ))}
+          {clientes.map((c,i)=><ClienteCard key={i} c={c} upC={upC} BAIRROS={BAIRROS} LOJA_LAT={LOJA_LAT} LOJA_LNG={LOJA_LNG} haversine={haversine} calcFrete={calcFrete} inp={inp} lbl={lbl} btnG={btnG} btnD={btnD} card={card} G={G} gg={gg}/>)}
         </div>}
 
         {tab==="fotos"&&<div style={{padding:"10px 0"}}>
