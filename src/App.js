@@ -1,11 +1,12 @@
 /* eslint-disable no-unused-vars */
 import { useState, useEffect, useRef } from "react";
 
-const VERSAO = "2.1.0";
+const VERSAO = "2.2.0";
 const WHATSAPP = "5511913359350";
 const INSTAGRAM = "elchai_pastelaria";
 const DELIVERY_MINS = 40;
-const LOJA_LAT = -23.5285, LOJA_LNG = -46.4125;
+const LOJA_END = "Rua Desembargador Áureo Cerqueira Leite, 172, Cidade Kemel, São Paulo, SP";
+const GOOGLE_KEY = process.env.REACT_APP_GOOGLE_MAPS_KEY || "AIzaSyCVk_IcYYIRlLrQdvz-yteh1FFzyMNk4_U";
 
 const BAIRROS = [
   {b:"Cidade Kemel",lat:-23.5285,lng:-46.4125},{b:"Jardim Lapena",lat:-23.5240,lng:-46.4080},
@@ -68,6 +69,25 @@ function haversine(la1,lo1,la2,lo2){
   return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 function calcFrete(km){ if(km<=2)return 5; if(km<=4)return 8; if(km<=6)return 12; return null; }
+
+async function calcularFreteGoogle(endCliente){
+  try{
+    const dest=encodeURIComponent(endCliente+", São Paulo, SP, Brasil");
+    const orig=encodeURIComponent(LOJA_END);
+    const url=`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${orig}&destinations=${dest}&key=${GOOGLE_KEY}&units=metric&language=pt-BR`;
+    const r=await fetch(url);
+    const d=await r.json();
+    if(d.status==="OK"&&d.rows[0].elements[0].status==="OK"){
+      const km=d.rows[0].elements[0].distance.value/1000;
+      const f=calcFrete(km);
+      return{km:km.toFixed(1),valor:f,distText:d.rows[0].elements[0].distance.text};
+    }
+    return null;
+  }catch(e){
+    console.log("Google Maps error:",e);
+    return null;
+  }
+}
 
 function exportCSV(rows,filename){
   const keys=Object.keys(rows[0]);
@@ -252,9 +272,10 @@ export default function App(){
   const [authTel,setAuthTel]=useState("");
   const [cliente,setCliente]=useState(null);
   const [cadForm,setCadForm]=useState({nome:"",rua:"",num:"",bairroSel:"",senha:"",senhaConf:"",dica:""});
-  const [endForm,setEndForm]=useState({rua:"",num:"",bairroSel:"",obs:"",pagto:"pix"});
+  const [endForm,setEndForm]=useState({rua:"",num:"",bairro:"",obs:"",pagto:"pix"});
   const [frete,setFrete]=useState(null);
   const [freteErr,setFreteErr]=useState("");
+  const [freteLoading,setFreteLoading]=useState(false);
   const [lojaForm,setLojaForm]=useState({..._loja});
   const [msgMassa,setMsgMassa]=useState("🥟 Olá! Novidades na Elchai Pastelaria! Venha fazer seu pedido!");
   const [disparoIdx,setDisparoIdx]=useState(0);
@@ -307,19 +328,21 @@ export default function App(){
 
   const loginSuccess=(cli,tel)=>{
     setCliente(cli);setAuthTel(tel);
-    setEndForm({rua:cli.rua||"",num:cli.num||"",bairroSel:cli.bairro||"",obs:"",pagto:"pix"});
+    setEndForm({rua:cli.rua||"",num:cli.num||"",bairro:cli.bairro||"",obs:"",pagto:"pix"});
     const ped=_pedidos.find(x=>x.cliente.tel===cli.tel);
     if(ped){setPedidoConf(ped);setPedidoTs(ped.ts||null);}
     dbSet("elchai_sessao",{tel:cli.tel,pedidoId:ped?.id||null,pedidoTs:ped?.ts||null});
   };
 
-  const doFrete=()=>{
-    if(!endForm.bairroSel){setFreteErr("Selecione seu bairro.");return false;}
-    const b=BAIRROS.find(x=>x.b===endForm.bairroSel);
-    if(!b){setFreteErr("Bairro não encontrado.");return false;}
-    const km=haversine(LOJA_LAT,LOJA_LNG,b.lat,b.lng),f=calcFrete(km);
-    if(f===null){setFreteErr(`Fora da área (${km.toFixed(1)}km). Atendemos até 6km.`);setFrete(null);return false;}
-    setFrete({valor:f,km:km.toFixed(1)});setFreteErr("");return true;
+  const doFrete=async()=>{
+    if(!endForm.rua||!endForm.num){setFreteErr("Preencha rua e número.");return false;}
+    setFreteLoading(true);setFreteErr("");
+    const end=`${endForm.rua}, ${endForm.num}${endForm.bairro?`, ${endForm.bairro}`:""}`;
+    const result=await calcularFreteGoogle(end);
+    setFreteLoading(false);
+    if(!result){setFreteErr("Não foi possível calcular o frete. Verifique o endereço.");return false;}
+    if(result.valor===null){setFreteErr(`Endereço fora da área de entrega (${result.km}km). Atendemos até 6km.`);setFrete(null);return false;}
+    setFrete(result);setFreteErr("");return true;
   };
 
   const salvarPedido=()=>{
@@ -563,9 +586,6 @@ export default function App(){
 
   // CHECKOUT
   if(view==="checkout"){
-    const bi=BAIRROS.find(x=>x.b===endForm.bairroSel);
-    const kmPrev=bi?haversine(LOJA_LAT,LOJA_LNG,bi.lat,bi.lng):null;
-    const fPrev=kmPrev?calcFrete(kmPrev):null;
     return(
       <div style={app}>
         <div style={hdr}><button style={btnBack} onClick={()=>setView("carrinho")}>← Carrinho</button><span style={{fontWeight:900,fontSize:17,background:gg,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Entrega</span><div/></div>
@@ -573,16 +593,24 @@ export default function App(){
           <div style={{background:G.bc,borderRadius:12,padding:"12px 14px",marginBottom:14,border:`1px solid ${G.gold}33`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div><div style={{fontWeight:700,color:G.gl}}>👤 {cliente.nome}</div><div style={{fontSize:12,color:G.tm}}>📱 {cliente.tel}</div></div>
           </div>
-          <label style={lbl}>Rua</label><input style={inp} value={endForm.rua} onChange={e=>setEndForm({...endForm,rua:e.target.value})}/>
-          <label style={lbl}>Número</label><input style={inp} value={endForm.num} onChange={e=>setEndForm({...endForm,num:e.target.value})}/>
-          <label style={lbl}>Bairro *</label>
-          <select style={{...inp,cursor:"pointer"}} value={endForm.bairroSel} onChange={e=>{setEndForm({...endForm,bairroSel:e.target.value});setFrete(null);setFreteErr("");}}>
-            <option value="">-- Selecione --</option>
-            {BAIRROS.map(b=>{const km=haversine(LOJA_LAT,LOJA_LNG,b.lat,b.lng),f=calcFrete(km);return f!==null&&<option key={b.b} value={b.b}>{b.b} · {fmt(f)} ({km.toFixed(1)}km)</option>;})}
-          </select>
-          {endForm.bairroSel&&fPrev&&!frete&&<div style={{background:"#1a2a1a",borderRadius:10,padding:"10px",marginBottom:10,fontSize:13,color:"#aaa",border:"1px solid #2d5a2d"}}>🛵 Frete estimado: <strong style={{color:"#6f6"}}>{fmt(fPrev)}</strong></div>}
+          <label style={lbl}>Rua *</label>
+          <input style={inp} placeholder="Rua das Flores" value={endForm.rua} onChange={e=>{setEndForm({...endForm,rua:e.target.value});setFrete(null);}}/>
+          <label style={lbl}>Número *</label>
+          <input style={inp} placeholder="123" value={endForm.num} onChange={e=>{setEndForm({...endForm,num:e.target.value});setFrete(null);}}/>
+          <label style={lbl}>Bairro</label>
+          <input style={inp} placeholder="Cidade Kemel" value={endForm.bairro} onChange={e=>{setEndForm({...endForm,bairro:e.target.value});setFrete(null);}}/>
+          {/* Calcular frete */}
+          <button style={{...btnD,marginBottom:10}} onClick={doFrete} disabled={freteLoading}>
+            {freteLoading?"⏳ Calculando frete...":"🛵 Calcular Frete"}
+          </button>
           {freteErr&&<div style={{color:"#f55",fontSize:13,marginBottom:8}}>{freteErr}</div>}
-          {frete&&<div style={{background:"#1a3a1a",borderRadius:10,padding:"10px",marginBottom:10,border:"1px solid #2d7a2d",display:"flex",justifyContent:"space-between"}}><span style={{color:"#6f6",fontSize:13}}>🛵 Frete ({frete.km}km)</span><span style={{color:"#6f6",fontWeight:800}}>{fmt(frete.valor)}</span></div>}
+          {frete&&<div style={{background:"#1a3a1a",borderRadius:10,padding:"12px",marginBottom:10,border:"1px solid #2d7a2d"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+              <span style={{color:"#6f6",fontSize:13}}>🛵 Frete calculado</span>
+              <span style={{color:"#6f6",fontWeight:800}}>{fmt(frete.valor)}</span>
+            </div>
+            <div style={{fontSize:12,color:"#aaa"}}>📍 Distância: {frete.distText||frete.km+"km"}</div>
+          </div>}
           <label style={lbl}>Observações</label>
           <input style={inp} placeholder="Sem cebola, portão azul..." value={endForm.obs} onChange={e=>setEndForm({...endForm,obs:e.target.value})}/>
           <div style={{fontSize:14,fontWeight:800,color:G.gl,marginBottom:10}}>💳 Pagamento</div>
@@ -596,7 +624,9 @@ export default function App(){
             <div style={{borderTop:`1px solid ${G.gold}33`,marginTop:8,paddingTop:8,fontWeight:900,fontSize:16,display:"flex",justifyContent:"space-between",color:G.gl}}><span>Total</span><span>{fmt(total+(frete?.valor||0))}</span></div>
           </div>
         </div>
-        <div style={{position:"sticky",bottom:0,background:G.bg,padding:"11px 13px",borderTop:`1px solid ${G.gold}22`}}><button style={btnG} onClick={salvarPedido}>✅ Confirmar Pedido</button></div>
+        <div style={{position:"sticky",bottom:0,background:G.bg,padding:"11px 13px",borderTop:`1px solid ${G.gold}22`}}>
+          <button style={{...btnG,opacity:!frete?0.5:1}} onClick={()=>{if(!frete){alert("Calcule o frete primeiro!");return;}salvarPedido();}}>✅ Confirmar Pedido</button>
+        </div>
         <div style={{height:80}}/>
       </div>
     );
